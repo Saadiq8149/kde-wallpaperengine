@@ -1,0 +1,12 @@
+{
+    "KPackageStructure": "Plasma/Wallpaper",
+    "KPlugin": {
+        "Id": "com.saadiq.kde.wallpaperengine",
+        "Name": "Wallpaper Engine",
+        "Description": "Wallpaper Engine integration for KDE Plasma",
+        "Version": "0.1",
+        "License": "GPL-3.0-or-later",
+        "Icon": "preferences-desktop-wallpaper"
+    },
+    "X-KDE-ParentApp": "org.kde.plasmashell"
+}
