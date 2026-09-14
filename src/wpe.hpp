@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -102,11 +103,10 @@ inline string getWallpaperEnginePid() {
 }
 
 inline void WallpaperEngine::init() {
-
   QProcess::startDetached("steam", {"steam://run/431960"});
 
   string pid;
-  for (int w = 0; w < 100; w++) {
+  for (int w = 0; w < 1000; w++) {
     pid = getWallpaperEnginePid();
     if (!pid.empty()) {
       break;
@@ -114,44 +114,56 @@ inline void WallpaperEngine::init() {
     QThread::msleep(100);
   }
 
-  std::ifstream file("/proc/" + pid + "/environ");
-  string envVariable;
-  while (std::getline(file, envVariable, '\0')) {
-    if (envVariable.empty())
-      continue;
+  QString protonPath;
+  QString winePath;
 
-    const auto pos = envVariable.find('=');
-    if (pos == string::npos)
-      continue;
+  for (int w = 0; w < 1000; w++) {
+    context.env.clear();
+    std::ifstream file("/proc/" + pid + "/environ");
 
-    const QString key = QString::fromStdString(envVariable.substr(0, pos));
-    const QString value = QString::fromStdString(envVariable.substr(pos + 1));
-    context.env.insert(key, value);
+    string envVariable;
+    while (std::getline(file, envVariable, '\0')) {
+      if (envVariable.empty())
+        continue;
+
+      const auto pos = envVariable.find('=');
+      if (pos == string::npos)
+        continue;
+
+      const QString key = QString::fromStdString(envVariable.substr(0, pos));
+      const QString value = QString::fromStdString(envVariable.substr(pos + 1));
+
+      context.env.insert(key, value);
+    }
+
+    protonPath =
+        context.env.value("STEAM_COMPAT_TOOL_PATHS").split(":").first();
+    winePath = context.env.value("STEAM_COMPAT_DATA_PATH");
+
+    if (!protonPath.isEmpty() && !winePath.isEmpty()) {
+      break;
+    }
+
+    QThread::msleep(100);
   }
-  context.env.remove("WINESERVERSOCKET");
 
-  const QString protonPath =
-      context.env.value("STEAM_COMPAT_TOOL_PATHS").split(":").first();
+  context.env.remove("WINESERVERSOCKET");
   context.winePath = protonPath + "/files/bin/wine";
 
-  const path winePrefix = context.env.value("WINEPREFIX").toStdString();
-  QString windowsRootDrive;
-
-  for (const auto &entry : fs::directory_iterator(winePrefix / "dosdevices")) {
+  for (const auto &entry : fs::directory_iterator(path(winePath.toStdString()) /
+                                                  "pfx" / "dosdevices")) {
     if (!fs::is_symlink(entry.path()))
       continue;
 
-    const path target = fs::read_symlink(entry.path());
-
-    if (target == "/") {
-      windowsRootDrive =
+    if (fs::read_symlink(entry.path()) == "/") {
+      const QString drive =
           QString::fromStdString(entry.path().filename().string());
+
+      context.wallpaperEnginePath =
+          drive + context.env.value("STEAM_COMPAT_INSTALL_PATH");
       break;
     }
   }
-
-  context.wallpaperEnginePath =
-      windowsRootDrive + context.env.value("STEAM_COMPAT_INSTALL_PATH");
 }
 
 inline void WallpaperEngine::openWallpaper(string wallpaperId, int screenWidth,
@@ -180,6 +192,10 @@ inline void WallpaperEngine::openWallpaper(string wallpaperId, int screenWidth,
       "-height",
       QString::number(screenHeight),
       "-borderless",
+      // "-x",
+      // QString::number(screenWidth),
+      // "-y",
+      // QString::number(screenHeight),
   });
   process.startDetached();
 }
