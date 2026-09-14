@@ -1,7 +1,7 @@
 #pragma once
 
-#include "qprocess.h"
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QSettings>
 #include <QThread>
 
@@ -15,16 +15,19 @@
 namespace fs = std::filesystem;
 using std::optional, fs::path, std::string;
 
-struct WallpaperEngineConfig {
-  path workshop;
+struct WallpaperEngineContext {
+  path workshopPath;
+  QProcessEnvironment env;
+  QString winePath;
+  QString wallpaperEnginePath;
 };
 
-inline optional<WallpaperEngineConfig> getWallpaperEngineConfig() {
+inline optional<WallpaperEngineContext> makeWallpaperEngineContext() {
   QSettings settings;
-  path workshop = settings.value("workshop").toString().toStdString();
+  path workshopPath = settings.value("workshopPath").toString().toStdString();
 
-  if (!workshop.empty()) {
-    return WallpaperEngineConfig{workshop};
+  if (!workshopPath.empty()) {
+    return WallpaperEngineContext{workshopPath};
   }
 
   std::error_code ec;
@@ -42,10 +45,11 @@ inline optional<WallpaperEngineConfig> getWallpaperEngineConfig() {
       continue;
     if (p.parent_path().parent_path().filename() != "workshop")
       continue;
-    workshop = p;
+    workshopPath = p;
 
-    settings.setValue("workshop", QString::fromStdString(workshop.string()));
-    return WallpaperEngineConfig{workshop};
+    settings.setValue("workshopPath",
+                      QString::fromStdString(workshopPath.string()));
+    return WallpaperEngineContext{workshopPath};
   }
 
   return std::nullopt;
@@ -65,25 +69,128 @@ struct Wallpaper {
 
 class WallpaperEngine {
 public:
-  explicit WallpaperEngine(WallpaperEngineConfig paths)
-      : paths(std::move(paths)) {}
-  inline void launch();
+  explicit WallpaperEngine(WallpaperEngineContext context)
+      : context(std::move(context)) {}
+  inline void init();
   inline void openWallpaper(string wallpaperId, int screenWidth,
                             int screenHeight);
   inline std::vector<Wallpaper> getWallpapers();
+  WallpaperEngineContext context;
 
 private:
-  WallpaperEngineConfig paths;
-  QProcess process;
 };
+
+inline string getWallpaperEnginePid() {
+  for (const auto &entry : std::filesystem::directory_iterator("/proc")) {
+    if (!entry.is_directory())
+      continue;
+
+    const path process = entry.path();
+    const string name = process.filename().string();
+    if (name.empty() || !std::isdigit(name[0]))
+      continue;
+
+    std::ifstream file(entry.path() / "cmdline");
+    string executable;
+    std::getline(file, executable, '\0');
+
+    if (executable == "wallpaper64.exe") {
+      return name;
+    }
+  }
+  return "";
+}
+
+inline void WallpaperEngine::init() {
+
+  QProcess::startDetached("steam", {"steam://run/431960"});
+
+  string pid;
+  for (int w = 0; w < 100; w++) {
+    pid = getWallpaperEnginePid();
+    if (!pid.empty()) {
+      break;
+    }
+    QThread::msleep(100);
+  }
+
+  std::ifstream file("/proc/" + pid + "/environ");
+  string envVariable;
+  while (std::getline(file, envVariable, '\0')) {
+    if (envVariable.empty())
+      continue;
+
+    const auto pos = envVariable.find('=');
+    if (pos == string::npos)
+      continue;
+
+    const QString key = QString::fromStdString(envVariable.substr(0, pos));
+    const QString value = QString::fromStdString(envVariable.substr(pos + 1));
+    context.env.insert(key, value);
+  }
+  context.env.remove("WINESERVERSOCKET");
+
+  const QString protonPath =
+      context.env.value("STEAM_COMPAT_TOOL_PATHS").split(":").first();
+  context.winePath = protonPath + "/files/bin/wine";
+
+  const path winePrefix = context.env.value("WINEPREFIX").toStdString();
+  QString windowsRootDrive;
+
+  for (const auto &entry : fs::directory_iterator(winePrefix / "dosdevices")) {
+    if (!fs::is_symlink(entry.path()))
+      continue;
+
+    const path target = fs::read_symlink(entry.path());
+
+    if (target == "/") {
+      windowsRootDrive =
+          QString::fromStdString(entry.path().filename().string());
+      break;
+    }
+  }
+
+  context.wallpaperEnginePath =
+      windowsRootDrive + context.env.value("STEAM_COMPAT_INSTALL_PATH");
+}
+
+inline void WallpaperEngine::openWallpaper(string wallpaperId, int screenWidth,
+                                           int screenHeight) {
+  const path wallpaperPath =
+      context.workshopPath / wallpaperId / "project.json";
+  if (!fs::exists(wallpaperPath))
+    return;
+
+  const QString wallpaperExecutable =
+      context.wallpaperEnginePath + "/wallpaper64.exe";
+
+  QProcess process;
+  process.setProcessEnvironment(context.env);
+  process.setProgram(context.winePath);
+  process.setArguments({
+      wallpaperExecutable,
+      "-control",
+      "openWallpaper",
+      "-file",
+      QString::fromStdString(wallpaperPath.string()),
+      "-playInWindow",
+      "kde-wallpaperengine",
+      "-width",
+      QString::number(screenWidth),
+      "-height",
+      QString::number(screenHeight),
+      "-borderless",
+  });
+  process.startDetached();
+}
 
 inline std::vector<Wallpaper> WallpaperEngine::getWallpapers() {
   std::vector<Wallpaper> wallpapers;
 
-  if (!fs::exists(paths.workshop))
+  if (!fs::exists(context.workshopPath))
     return wallpapers;
 
-  for (const auto dir : fs::directory_iterator(paths.workshop)) {
+  for (const auto dir : fs::directory_iterator(context.workshopPath)) {
     if (!fs::is_directory(dir))
       continue;
     const string wallpaperId = dir.path().filename().string();
@@ -114,49 +221,4 @@ inline std::vector<Wallpaper> WallpaperEngine::getWallpapers() {
   }
 
   return wallpapers;
-}
-
-inline string getWallpaperEnginePid() {
-  for (const auto &entry : std::filesystem::directory_iterator("/proc")) {
-    if (!entry.is_directory())
-      continue;
-
-    const path process = entry.path();
-    const string name = process.filename().string();
-    if (name.empty() || !std::isdigit(name[0]))
-      continue;
-
-    std::ifstream file(entry.path() / "cmdline");
-    string executable;
-    std::getline(file, executable, '\0');
-
-    if (executable == "wallpaper64.exe") {
-      return name;
-    }
-  }
-  return "";
-}
-
-inline void WallpaperEngine::launch() {
-  QProcess::startDetached("steam", {"steam://run/431960"});
-
-  string pid;
-  for (int w = 0; w < 100; w++) {
-    pid = getWallpaperEnginePid();
-    if (!pid.empty()) {
-      break;
-    }
-    QThread::msleep(100);
-  }
-}
-
-// Video wallpapers not working when rendering using this way using Proton +
-// WE, so we need to give video file directly as source to make it work
-
-inline void WallpaperEngine::openWallpaper(string wallpaperId, int screenWidth,
-                                           int screenHeight) {
-  const path wallpaperPath = paths.workshop / wallpaperId / "project.json";
-
-  if (!fs::exists(wallpaperPath))
-    return;
 }
