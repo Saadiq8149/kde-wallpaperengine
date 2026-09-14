@@ -6,12 +6,12 @@ WallpaperItem {
 
     Rectangle {
         anchors.fill: parent
-        color: "red"
+        color: "black"
 
         Text {
             anchors.centerIn: parent
             text: "KDE WALLPAPER ENGINE"
-            color: "white"
+            color: "red"
             font.pixelSize: 64
         }
     }

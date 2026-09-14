@@ -8,13 +8,15 @@ int main(int argc, char *argv[]) {
   QCoreApplication::setOrganizationName("saadiq");
   QCoreApplication::setApplicationName("kde-wallpaperengine");
 
-  if (const auto optionalPaths = getWallpaperEnginePaths()) {
-    const auto &paths = *optionalPaths;
+  if (const auto configOptional = getWallpaperEngineConfig()) {
+    const auto &config = *configOptional;
 
-    WallpaperEngine wallpaperEngine(paths);
+    WallpaperEngine wallpaperEngine(config);
+    wallpaperEngine.launch();
+
     const auto wallpapers = wallpaperEngine.getWallpapers();
 
-    wallpaperEngine.openWallpaper(wallpapers[1].id, 2880, 1800);
+    // wallpaperEngine.openWallpaper(wallpapers[1].id, 2880, 1800);
     return app.exec();
   }
 }
