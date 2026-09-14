@@ -114,40 +114,27 @@ inline void WallpaperEngine::init() {
     QThread::msleep(100);
   }
 
-  QString protonPath;
-  QString winePath;
+  std::ifstream file("/proc/" + pid + "/environ");
+  string envVariable;
+  while (std::getline(file, envVariable, '\0')) {
+    if (envVariable.empty())
+      continue;
 
-  for (int w = 0; w < 1000; w++) {
-    context.env.clear();
-    std::ifstream file("/proc/" + pid + "/environ");
+    const auto pos = envVariable.find('=');
+    if (pos == string::npos)
+      continue;
 
-    string envVariable;
-    while (std::getline(file, envVariable, '\0')) {
-      if (envVariable.empty())
-        continue;
+    const QString key = QString::fromStdString(envVariable.substr(0, pos));
+    const QString value = QString::fromStdString(envVariable.substr(pos + 1));
 
-      const auto pos = envVariable.find('=');
-      if (pos == string::npos)
-        continue;
-
-      const QString key = QString::fromStdString(envVariable.substr(0, pos));
-      const QString value = QString::fromStdString(envVariable.substr(pos + 1));
-
-      context.env.insert(key, value);
-    }
-
-    protonPath =
-        context.env.value("STEAM_COMPAT_TOOL_PATHS").split(":").first();
-    winePath = context.env.value("STEAM_COMPAT_DATA_PATH");
-
-    if (!protonPath.isEmpty() && !winePath.isEmpty()) {
-      break;
-    }
-
-    QThread::msleep(100);
+    context.env.insert(key, value);
   }
 
+  QString protonPath =
+      context.env.value("STEAM_COMPAT_TOOL_PATHS").split(":").first();
+  QString winePath = context.env.value("STEAM_COMPAT_DATA_PATH");
   context.env.remove("WINESERVERSOCKET");
+
   context.winePath = protonPath + "/files/bin/wine";
 
   for (const auto &entry : fs::directory_iterator(path(winePath.toStdString()) /
